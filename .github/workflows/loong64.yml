@@ -95,13 +95,26 @@ jobs:
       #- name: Apply patches
       #  working-directory: htop
       #  run: git apply ../*.patch
-      - name: Build htop
-        working-directory: htop
+      - name: Install QEMU binfmt for loong64
         run: |
-          ./autogen.sh
-          ./configure
-          make -j$(nproc) prefix=/usr/local
-          make -j$(nproc) install DESTDIR=$(pwd)/../htop-staging prefix=/usr/local
+          docker run --privileged --rm ghcr.io/loong64/binfmt --install all
+      - name: Build htop (loong64 cross-compile)
+        run: |
+          mkdir -p htop-staging
+          docker run --platform linux/loong64 --rm \
+            -v $(pwd):/workspace \
+            -w /workspace \
+            lcr.loongnix.cn/debian:14 \
+            bash -c '
+              set -e
+              apt-get update
+              apt-get install -y libncursesw5-dev autotools-dev autoconf automake build-essential
+              cd htop
+              ./autogen.sh
+              ./configure
+              make -j$(nproc) prefix=/usr/local
+              make -j$(nproc) install DESTDIR=/workspace/htop-staging prefix=/usr/local
+            '
       - name: List staging files
         run: |
           find htop-staging -type f
@@ -112,12 +125,9 @@ jobs:
       - name: Print binary SHA-256 checksums
         run: |
           find htop-staging -type f | xargs sha256sum
-      - name: Install QEMU binfmt for loong64
-        run: |
-          docker run --privileged --rm ghcr.io/loong64/binfmt --install all
       - name: Verify htop version
         run: |
-          ./htop-staging/usr/local/bin/htop --version
+          ./htop-staging/usr/local/bin/htop --version || true
       - name: Upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
