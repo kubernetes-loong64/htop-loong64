@@ -1,0 +1,508 @@
+name: loong64
+on:
+  push:
+    branches:
+      - loong64-*
+    tags:
+      - release-loong64-*
+  pull_request:
+    branches:
+      - loong64-*
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: debian:13
+    outputs:
+      RAW_VERSION: ${{ steps.extract.outputs.RAW_VERSION }}
+      HTOP_VERSION: ${{ steps.extract.outputs.HTOP_VERSION }}
+      RELEASE: ${{ steps.extract.outputs.RELEASE }}
+      IS_STABLE: ${{ steps.extract.outputs.IS_STABLE }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Print branch name
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "${{ github.base_ref }} (PR target)"
+          else
+            echo ${{ github.ref_name }}
+          fi
+      - name: Extract htop version
+        id: extract
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            REF=${{ github.base_ref }}
+          else
+            REF=${{ github.ref_name }}
+          fi
+          echo "REF=$REF"
+          RAW_VERSION=$(echo $REF | awk -F'loong64-' '{print $2}')
+          echo "RAW_VERSION=$RAW_VERSION"
+          echo "RAW_VERSION=$RAW_VERSION" >> ${GITHUB_ENV}
+          echo "RAW_VERSION=$RAW_VERSION" >> ${GITHUB_OUTPUT}
+          HTOP_VERSION=$(echo $RAW_VERSION | awk -F'+' '{print $1}')
+          echo "HTOP_VERSION=$HTOP_VERSION"
+          echo "HTOP_VERSION=$HTOP_VERSION" >> ${GITHUB_ENV}
+          echo "HTOP_VERSION=$HTOP_VERSION" >> ${GITHUB_OUTPUT}
+          RELEASE=$(echo $RAW_VERSION | awk -F'+' '{print $2}')
+          RELEASE=${RELEASE:-alpha.${{ github.run_number }}}
+          echo "RELEASE=$RELEASE"
+          echo "RELEASE=$RELEASE" >> ${GITHUB_ENV}
+          echo "RELEASE=$RELEASE" >> ${GITHUB_OUTPUT}
+          if echo "$RAW_VERSION" | grep -qE '[+].*(alpha|beta|rc)'; then
+            IS_STABLE=false
+          else
+            IS_STABLE=true
+          fi
+          echo "IS_STABLE=$IS_STABLE"
+          echo "IS_STABLE=$IS_STABLE" >> ${GITHUB_OUTPUT}
+      - name: Install build tools
+        run: |
+          apt-get update
+          apt-get install -y libncursesw5-dev autotools-dev autoconf automake build-essential git
+      - name: Clone htop
+        run: |
+          git clone --branch ${{ env.HTOP_VERSION }} --depth 1 https://github.com/htop-dev/htop.git htop
+      - name: ls
+        run: ls -lah
+      - name: Install Docker CLI
+        run: |
+          apt remove $(dpkg --get-selections docker.io docker-compose docker-doc podman-docker containerd runc | cut -f1)
+          apt update
+          apt install -y ca-certificates curl
+          install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+          chmod a+r /etc/apt/keyrings/docker.asc
+          # Add the repository to Apt sources:
+          tee /etc/apt/sources.list.d/docker.sources <<EOF
+          Types: deb
+          URIs: https://download.docker.com/linux/debian
+          Suites: $(. /etc/os-release && echo "$VERSION_CODENAME")
+          Components: stable
+          Architectures: $(dpkg --print-architecture)
+          Signed-By: /etc/apt/keyrings/docker.asc
+          EOF
+          apt update
+          apt install -y docker-ce-cli
+      - name: Verify Docker installation
+        run: |
+          ls -la /run/docker.sock 2>/dev/null || echo "/run/docker.sock not found"
+          echo "DOCKER_HOST=$DOCKER_HOST"
+          docker info
+      #- name: Apply patches
+      #  working-directory: htop
+      #  run: git apply ../*.patch
+      - name: Build htop
+        working-directory: htop
+        run: |
+          ./autogen.sh
+          ./configure
+          make -j$(nproc) prefix=/usr/local
+          make -j$(nproc) install DESTDIR=$(pwd)/../htop-staging prefix=/usr/local
+      - name: List staging files
+        run: |
+          find htop-staging -type f
+      - name: Inspect binary file type
+        run: |
+          echo "=== htop binary ==="
+          file htop-staging/usr/local/bin/htop
+      - name: Print binary SHA-256 checksums
+        run: |
+          find htop-staging -type f | xargs sha256sum
+      - name: Install QEMU binfmt for loong64
+        run: |
+          docker run --privileged --rm ghcr.io/loong64/binfmt --install all
+      - name: Verify htop version
+        run: |
+          ./htop-staging/usr/local/bin/htop --version
+      - name: Upload binaries
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: htop-loong64-binaries
+          path: |
+            htop-staging/usr/local/bin/htop
+      - name: Upload assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: htop-loong64-assets
+          path: |
+            htop-staging/usr/local/share/man/man1/htop.1
+            htop-staging/usr/local/share/icons/hicolor/scalable/apps/htop.svg
+            htop-staging/usr/local/share/pixmaps/htop.png
+            htop-staging/usr/local/share/applications/htop.desktop
+      - name: Export system version
+        run: |
+          cat /etc/os-release > /tmp/build-os-release.txt
+          cat /tmp/build-os-release.txt
+      - name: Export installed packages
+        run: |
+          dpkg -l > /tmp/build-installed-packages.txt
+          cat /tmp/build-installed-packages.txt
+      - name: Upload system info
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: htop-loong64-system-info
+          path: |
+            /tmp/build-installed-packages.txt
+            /tmp/build-os-release.txt
+
+  rpm-anolis:
+    needs: build
+    runs-on: ubuntu-latest
+    container: openanolis/anolisos:23.4
+    outputs:
+      ANOLIS_RPM_NAME: ${{ steps.rpm-file.outputs.ANOLIS_RPM_NAME }}
+      ANOLIS_VERSION: ${{ steps.extract-version.outputs.ANOLIS_VERSION }}
+    permissions:
+      contents: read
+    env:
+      RAW_VERSION: ${{ needs.build.outputs.RAW_VERSION }}
+      HTOP_VERSION: ${{ needs.build.outputs.HTOP_VERSION }}
+      RELEASE: ${{ needs.build.outputs.RELEASE }}
+      ARCH: loongarch64
+    steps:
+      - name: Install gzip
+        run: yum install -y gzip
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Extract version
+        id: extract-version
+        run: |
+          echo "VERSION=$HTOP_VERSION"
+          echo "VERSION=$HTOP_VERSION" >> ${GITHUB_ENV}
+          DIST=$(rpm --eval '%{dist}')
+          echo "DIST=$DIST"
+          echo "DIST=$DIST" >> ${GITHUB_ENV}
+          ANOLIS_VERSION=$(cat /etc/anolis-release | awk '{print $4}' | cut -d'.' -f1)
+          echo "ANOLIS_VERSION=$ANOLIS_VERSION"
+          echo "ANOLIS_VERSION=$ANOLIS_VERSION" >> ${GITHUB_OUTPUT}
+          echo "ANOLIS_VERSION=$ANOLIS_VERSION" >> ${GITHUB_ENV}
+      - name: Install build tools
+        run: yum install -y rpm-build rpmdevtools rpm-sign
+      - name: Download binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: htop-loong64-binaries
+          path: artifacts
+      - name: Download assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: htop-loong64-assets
+          path: artifacts/assets
+      - name: Build RPM
+        run: |
+          rm -rf ~/rpmbuild
+          rpmdev-setuptree
+          find ~/rpmbuild
+          cp artifacts/htop ~/rpmbuild/BUILD/
+          cp artifacts/assets/htop.1 ~/rpmbuild/BUILD/
+          cp artifacts/assets/htop.svg ~/rpmbuild/BUILD/
+          cp artifacts/assets/htop.png ~/rpmbuild/BUILD/
+          cp artifacts/assets/htop.desktop ~/rpmbuild/BUILD/
+          cp LICENSE ~/rpmbuild/BUILD/
+          cp htop.spec ~/rpmbuild/SPECS/
+          rpmbuild -ba --target ${{ env.ARCH }} ~/rpmbuild/SPECS/htop.spec \
+            --define "version ${{ env.VERSION }}" \
+            --define "release ${{ env.RELEASE }}"
+          mkdir -p rpms
+          find ~/rpmbuild/RPMS -name '*.rpm'
+          find ~/rpmbuild/RPMS -name '*.rpm' -exec cp -t rpms {} +
+      - name: List RPM files
+        id: rpm-file
+        run: |
+          ANOLIS_RPM_NAME=htop-${{ env.VERSION }}-${{ env.RELEASE }}${{ env.DIST }}.${{ env.ARCH }}.rpm
+          echo "ANOLIS_RPM_NAME=$ANOLIS_RPM_NAME"
+          echo "ANOLIS_RPM_NAME=$ANOLIS_RPM_NAME" >> $GITHUB_OUTPUT
+          echo "ANOLIS_RPM_NAME=$ANOLIS_RPM_NAME" >> $GITHUB_ENV
+          echo "=== RPM file name: $ANOLIS_RPM_NAME ==="
+          sha256sum rpms/$ANOLIS_RPM_NAME
+          echo "=== RPM info ==="
+          rpm -qpi rpms/$ANOLIS_RPM_NAME
+          echo "=== RPM contents ==="
+          rpm2cpio rpms/$ANOLIS_RPM_NAME | cpio -it
+      - name: Import GPG key
+        run: |
+          export LANG=C.UTF-8
+          echo "${{ secrets.GPG_PRIVATE_KEY_BASE64 }}" | base64 -d | gpg --batch --import > /dev/null
+          echo "$(gpg --list-secret-keys --keyid-format LONG | grep -Eo '[A-F0-9]{40}' | head -1):6:" | gpg --import-ownertrust
+          GPG_KEY_ID=$(gpg --list-secret-keys --with-colons | grep '^sec:' | head -1 | cut -d: -f5)
+          echo "GPG_KEY_ID=$GPG_KEY_ID"
+          echo "GPG_KEY_ID=$GPG_KEY_ID" >> $GITHUB_ENV
+      - name: Configure rpmmacros
+        run: |
+          cat > ~/.rpmmacros << EOF
+          %_signature gpg
+          %_gpg_path ~/.gnupg
+          %_gpg_name ${{ env.GPG_KEY_ID }}
+          %_gpgbin /usr/bin/gpg2
+          %__gpg_sign_cmd %{__gpg} gpg --force-v3-sigs --digest-algo sha256 --batch --no-verbose --no-armor --no-secmem-warning -u "%{_gpg_name}" -sbo %{__signature_filename} %{__plaintext_filename}
+          EOF
+          gpg --armor --export "${GPG_KEY_ID}" > /tmp/gpg-pubkey.asc
+          rpm --import /tmp/gpg-pubkey.asc
+      - name: Sign RPM
+        run: |
+          echo "=== Signing RPM with GPG key: $GPG_KEY_ID ==="
+          rpm --addsign rpms/$ANOLIS_RPM_NAME
+          echo "=== Verifying RPM signature ==="
+          rpm --checksig rpms/$ANOLIS_RPM_NAME
+          echo "=== RPM file name: $ANOLIS_RPM_NAME ==="
+          sha256sum rpms/$ANOLIS_RPM_NAME
+          echo "=== RPM info ==="
+          rpm -qpi rpms/$ANOLIS_RPM_NAME
+          echo "=== RPM contents ==="
+          rpm2cpio rpms/$ANOLIS_RPM_NAME | cpio -it
+      - name: Upload RPM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: htop-loong64-rpm
+          path: |
+            rpms/${{ env.ANOLIS_RPM_NAME }}
+      - name: Export system version
+        run: |
+          cat /etc/os-release > /tmp/rpm-anolis-os-release.txt
+          cat /tmp/rpm-anolis-os-release.txt
+      - name: Export installed packages
+        run: |
+          rpm -qa --queryformat '%{NAME}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\n' | column -t -s $'\t' | sort -f > /tmp/rpm-anolis-installed-packages-rpm.txt
+          cat /tmp/rpm-anolis-installed-packages-rpm.txt
+      - name: Upload system info
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: htop-loong64-rpm-system-info
+          path: |
+            /tmp/rpm-anolis-installed-packages-rpm.txt
+            /tmp/rpm-anolis-os-release.txt
+
+  deb-debian:
+    needs: build
+    runs-on: ubuntu-latest
+    container: debian:13
+    outputs:
+      DEBIAN_DEB_NAME: ${{ steps.deb-file.outputs.DEBIAN_DEB_NAME }}
+      DEBIAN_VERSION_CODENAME: ${{ steps.extract-version.outputs.DEBIAN_VERSION_CODENAME }}
+    permissions:
+      contents: read
+    env:
+      RAW_VERSION: ${{ needs.build.outputs.RAW_VERSION }}
+      HTOP_VERSION: ${{ needs.build.outputs.HTOP_VERSION }}
+      RELEASE: ${{ needs.build.outputs.RELEASE }}
+      ARCH: loong64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install build tools
+        run: |
+          apt update
+          apt install -y file
+      - name: Extract version
+        id: extract-version
+        run: |
+          echo "VERSION=$HTOP_VERSION"
+          echo "VERSION=$HTOP_VERSION" >> ${GITHUB_ENV}
+          ID_VERSION_ID=$(sh -c '. /etc/os-release && echo "${ID}.${VERSION_ID}"')
+          echo "ID_VERSION_ID=$ID_VERSION_ID"
+          echo "ID_VERSION_ID=$ID_VERSION_ID" >> ${GITHUB_ENV}
+          DEBIAN_VERSION_CODENAME=$(sh -c '. /etc/os-release && echo "${VERSION_CODENAME}"')
+          echo "DEBIAN_VERSION_CODENAME=$DEBIAN_VERSION_CODENAME"
+          echo "DEBIAN_VERSION_CODENAME=$DEBIAN_VERSION_CODENAME" >> ${GITHUB_OUTPUT}
+          echo "DEBIAN_VERSION_CODENAME=$DEBIAN_VERSION_CODENAME" >> ${GITHUB_ENV}
+      - name: Download binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: htop-loong64-binaries
+          path: artifacts
+      - name: Download assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: htop-loong64-assets
+          path: artifacts/assets
+      - name: Build DEB
+        run: |
+          PKG_ROOT=$(mktemp -d)
+          mkdir -p $PKG_ROOT/usr/local/bin
+          mkdir -p $PKG_ROOT/usr/local/share/man/man1
+          mkdir -p $PKG_ROOT/usr/local/share/icons/hicolor/scalable/apps
+          mkdir -p $PKG_ROOT/usr/local/share/pixmaps
+          mkdir -p $PKG_ROOT/usr/local/share/applications
+          mkdir -p $PKG_ROOT/usr/local/share/doc/htop
+          mkdir -p $PKG_ROOT/DEBIAN
+
+          install -m 755 artifacts/htop $PKG_ROOT/usr/local/bin/htop
+          install -m 644 artifacts/assets/htop.1 $PKG_ROOT/usr/local/share/man/man1/htop.1
+          install -m 644 artifacts/assets/htop.svg $PKG_ROOT/usr/local/share/icons/hicolor/scalable/apps/htop.svg
+          install -m 644 artifacts/assets/htop.png $PKG_ROOT/usr/local/share/pixmaps/htop.png
+          install -m 644 artifacts/assets/htop.desktop $PKG_ROOT/usr/local/share/applications/htop.desktop
+          install -m 644 LICENSE $PKG_ROOT/usr/local/share/doc/htop/copyright
+
+          cat > $PKG_ROOT/DEBIAN/control << EOF
+          Package: htop
+          Version: ${{ env.VERSION }}-${{ env.RELEASE }}~${{ env.ID_VERSION_ID }}~${{ env.DEBIAN_VERSION_CODENAME }}
+          Architecture: ${{ env.ARCH }}
+          Maintainer: 徐晓伟 <xuxiaowei@xuxiaowei.com.cn>
+          Description: Interactive process viewer (loong64)
+           htop is a cross-platform interactive process viewer.
+           It requires ncurses.
+           .
+           This package provides htop for the loong64 (LoongArch) architecture.
+          Homepage: https://github.com/htop-dev/htop
+          Section: utils
+          Priority: optional
+          Depends: libncursesw6
+          EOF
+
+          mkdir -p debs
+          dpkg-deb --build $PKG_ROOT debs/
+
+          find debs -name '*.deb'
+          # Rename: replace ~ with . in filename (GitHub releases / URLs don't like ~)
+          for f in debs/*.deb; do
+            new_name=$(echo "$f" | tr '~' '.')
+            if [ "$f" != "$new_name" ]; then
+              mv "$f" "$new_name"
+              echo "Renamed: $f -> $new_name"
+            fi
+          done
+      - name: List DEB files
+        id: deb-file
+        run: |
+          DEBIAN_DEB_NAME=htop_${{ env.VERSION }}-${{ env.RELEASE }}.${{ env.ID_VERSION_ID }}.${{ env.DEBIAN_VERSION_CODENAME }}_${{ env.ARCH }}.deb
+          echo "DEBIAN_DEB_NAME=$DEBIAN_DEB_NAME"
+          echo "DEBIAN_DEB_NAME=$DEBIAN_DEB_NAME" >> $GITHUB_OUTPUT
+          echo "DEBIAN_DEB_NAME=$DEBIAN_DEB_NAME" >> $GITHUB_ENV
+          echo "=== DEB file name: $DEBIAN_DEB_NAME ==="
+          sha256sum debs/$DEBIAN_DEB_NAME
+          echo "=== DEB info ==="
+          dpkg --info debs/$DEBIAN_DEB_NAME
+          echo "=== DEB contents ==="
+          dpkg --contents debs/$DEBIAN_DEB_NAME
+      - name: Upload DEB
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: htop-loong64-deb
+          path: |
+            debs/${{ env.DEBIAN_DEB_NAME }}
+      - name: Export system version
+        run: |
+          cat /etc/os-release > /tmp/deb-debian-os-release.txt
+          cat /tmp/deb-debian-os-release.txt
+      - name: Export installed packages
+        run: |
+          dpkg -l > /tmp/deb-debian-installed-packages-packages.txt
+          cat /tmp/deb-debian-installed-packages-packages.txt
+      - name: Upload system info
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: htop-loong64-deb-system-info
+          path: |
+            /tmp/deb-debian-installed-packages-packages.txt
+            /tmp/deb-debian-os-release.txt
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [ build, rpm-anolis, deb-debian ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      IS_STABLE: ${{ needs.build.outputs.IS_STABLE }}
+      BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
+      ANOLIS_RPM_NAME: ${{ needs.rpm-anolis.outputs.ANOLIS_RPM_NAME }}
+      DEBIAN_DEB_NAME: ${{ needs.deb-debian.outputs.DEBIAN_DEB_NAME }}
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: htop-loong64-binaries
+          path: loong64-artifacts
+      - name: Download assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: htop-loong64-assets
+          path: loong64-artifacts
+      - name: Download system info
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: htop-loong64-system-info
+          path: loong64-artifacts
+      - name: Download RPM system info
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: htop-loong64-rpm-system-info
+          path: loong64-artifacts
+      - name: Download DEB system info
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: htop-loong64-deb-system-info
+          path: loong64-artifacts
+      - name: Download RPM
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: htop-loong64-rpm
+          path: loong64-artifacts
+      - name: Download DEB
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: htop-loong64-deb
+          path: loong64-artifacts
+      - name: List release artifacts
+        run: |
+          find loong64-artifacts -type f
+      - name: Import GPG key
+        run: |
+          export LANG=C.UTF-8
+          echo "${{ secrets.GPG_PRIVATE_KEY_BASE64 }}" | base64 -d | gpg --batch --import > /dev/null
+          echo "$(gpg --list-secret-keys --keyid-format LONG | grep -Eo '[A-F0-9]{40}' | head -1):6:" | gpg --import-ownertrust
+      - name: Sign artifacts
+        run: |
+          find loong64-artifacts -type f | while read -r file; do
+            gpg --batch --detach-sign --armor "$file"
+            echo "Signed: $file"
+            gpg --verify "$file".asc "$file"
+          done
+      - name: Generate release body
+        run: |
+          cat > release-body.md <<'BODYEOF'
+          ## Artifacts
+
+          | File                         | Download                                                                     |
+          |------------------------------|------------------------------------------------------------------------------|
+          | `htop`                       | [htop](${{ env.BASE_URL }}/htop)                                             |
+          | `${{ env.ANOLIS_RPM_NAME }}` | [${{ env.ANOLIS_RPM_NAME }}](${{ env.BASE_URL }}/${{ env.ANOLIS_RPM_NAME }}) |
+          | `${{ env.DEBIAN_DEB_NAME }}` | [${{ env.DEBIAN_DEB_NAME }}](${{ env.BASE_URL }}/${{ env.DEBIAN_DEB_NAME }}) |
+
+          Each file has a corresponding `.asc` detached GPG signature.
+
+          ```shell
+          # Binary
+          curl -LO ${{ env.BASE_URL }}/htop
+          curl -LO ${{ env.BASE_URL }}/htop.asc
+
+          # RPM (Anolis)
+          curl -LO ${{ env.BASE_URL }}/${{ env.ANOLIS_RPM_NAME }}
+          curl -LO ${{ env.BASE_URL }}/${{ env.ANOLIS_RPM_NAME }}.asc
+
+          # DEB (Debian)
+          curl -LO ${{ env.BASE_URL }}/${{ env.DEBIAN_DEB_NAME }}
+          curl -LO ${{ env.BASE_URL }}/${{ env.DEBIAN_DEB_NAME }}.asc
+          ```
+
+          ## Verifying releases
+
+          ```shell
+          gpg --keyserver keys.openpgp.org --recv-keys FCF8724722CCBF9F51B1FBE376532BE7E3013105
+          echo "FCF8724722CCBF9F51B1FBE376532BE7E3013105:6:" | gpg --import-ownertrust
+          gpg --verify <file>.asc <file>
+          ```
+          BODYEOF
+      - name: Create Release
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        with:
+          name: ${{ github.ref_name }}
+          body_path: release-body.md
+          prerelease: ${{ env.IS_STABLE == 'false' }}
+          make_latest: ${{ env.IS_STABLE == 'true' && 'legacy' || 'false' }}
+          files: |
+            loong64-artifacts/**
