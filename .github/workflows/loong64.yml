@@ -62,10 +62,7 @@ jobs:
       - name: Install build tools
         run: |
           apt-get update
-          apt-get install -y libncursesw5-dev autotools-dev autoconf automake build-essential git file
-      - name: Clone htop
-        run: |
-          git clone --branch ${{ env.HTOP_VERSION }} --depth 1 https://github.com/htop-dev/htop.git htop
+          apt-get install -y git file
       - name: ls
         run: ls -lah
       - name: Install Docker CLI
@@ -100,20 +97,21 @@ jobs:
           docker run --privileged --rm ghcr.io/loong64/binfmt --install all
       - name: Build htop (loong64 cross-compile)
         run: |
-          mkdir -p htop-staging
-          docker run --platform linux/loong64 --rm \
-            -v $(pwd):/workspace \
-            -w /workspace \
+          CID=$(docker create --platform linux/loong64 \
             openanolis/anolisos:23.4 \
             bash -c '
               set -e
-              dnf install -y ncurses-devel automake autoconf gcc
+              dnf install -y ncurses-devel automake autoconf gcc git
+              git clone --branch ${{ env.HTOP_VERSION }} --depth 1 https://github.com/htop-dev/htop.git htop
               cd htop
               ./autogen.sh
               ./configure
               make -j$(nproc) prefix=/usr/local
               make -j$(nproc) install DESTDIR=/workspace/htop-staging prefix=/usr/local
-            '
+            ')
+          docker start -a $CID || true
+          docker cp $CID:/workspace/htop-staging ./htop-staging
+          docker rm $CID
       - name: List staging files
         run: |
           find htop-staging -type f
