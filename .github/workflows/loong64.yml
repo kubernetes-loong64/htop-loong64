@@ -62,7 +62,7 @@ jobs:
       - name: Install build tools
         run: |
           apt-get update
-          apt-get install -y libncursesw5-dev autotools-dev autoconf automake build-essential git
+          apt-get install -y libncursesw5-dev autotools-dev autoconf automake build-essential git file
       - name: Clone htop
         run: |
           git clone --branch ${{ env.HTOP_VERSION }} --depth 1 https://github.com/htop-dev/htop.git htop
