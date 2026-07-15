@@ -201,10 +201,10 @@ jobs:
           rpmdev-setuptree
           find ~/rpmbuild
           cp artifacts/htop ~/rpmbuild/BUILD/
-          cp artifacts/assets/htop.1 ~/rpmbuild/BUILD/
-          cp artifacts/assets/htop.svg ~/rpmbuild/BUILD/
-          cp artifacts/assets/htop.png ~/rpmbuild/BUILD/
-          cp artifacts/assets/htop.desktop ~/rpmbuild/BUILD/
+          cp artifacts/man/man1/htop.1 ~/rpmbuild/BUILD/
+          cp artifacts/icons/hicolor/scalable/apps/htop.svg ~/rpmbuild/BUILD/
+          cp artifacts/pixmaps/htop.png ~/rpmbuild/BUILD/
+          cp artifacts/applications/htop.desktop ~/rpmbuild/BUILD/
           cp LICENSE ~/rpmbuild/BUILD/
           cp htop.spec ~/rpmbuild/SPECS/
           rpmbuild -ba --target ${{ env.ARCH }} ~/rpmbuild/SPECS/htop.spec \
@@ -322,6 +322,9 @@ jobs:
         with:
           name: htop-loong64-assets
           path: artifacts
+      - name: List artifacts files
+        run: |
+          find artifacts -type f
       - name: Build DEB
         run: |
           PKG_ROOT=$(mktemp -d)
@@ -330,15 +333,15 @@ jobs:
           mkdir -p $PKG_ROOT/usr/local/share/icons/hicolor/scalable/apps
           mkdir -p $PKG_ROOT/usr/local/share/pixmaps
           mkdir -p $PKG_ROOT/usr/local/share/applications
-          mkdir -p $PKG_ROOT/usr/local/share/doc/htop
+          mkdir -p $PKG_ROOT/usr/local/share/licenses/htop
           mkdir -p $PKG_ROOT/DEBIAN
 
           install -m 755 artifacts/htop $PKG_ROOT/usr/local/bin/htop
-          install -m 644 artifacts/assets/htop.1 $PKG_ROOT/usr/local/share/man/man1/htop.1
-          install -m 644 artifacts/assets/htop.svg $PKG_ROOT/usr/local/share/icons/hicolor/scalable/apps/htop.svg
-          install -m 644 artifacts/assets/htop.png $PKG_ROOT/usr/local/share/pixmaps/htop.png
-          install -m 644 artifacts/assets/htop.desktop $PKG_ROOT/usr/local/share/applications/htop.desktop
-          install -m 644 LICENSE $PKG_ROOT/usr/local/share/doc/htop/copyright
+          install -m 644 $(find artifacts -name 'htop.1') $PKG_ROOT/usr/local/share/man/man1/htop.1
+          install -m 644 $(find artifacts -name 'htop.svg') $PKG_ROOT/usr/local/share/icons/hicolor/scalable/apps/htop.svg
+          install -m 644 $(find artifacts -name 'htop.png') $PKG_ROOT/usr/local/share/pixmaps/htop.png
+          install -m 644 $(find artifacts -name 'htop.desktop') $PKG_ROOT/usr/local/share/applications/htop.desktop
+          install -m 644 LICENSE $PKG_ROOT/usr/local/share/licenses/htop/LICENSE
 
           cat > $PKG_ROOT/DEBIAN/control << EOF
           Package: htop
