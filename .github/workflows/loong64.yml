@@ -119,6 +119,7 @@ jobs:
         run: |
           echo "=== htop binary ==="
           file htop-staging/usr/local/bin/htop
+          ldd htop-staging/usr/local/bin/htop
       - name: Print binary SHA-256 checksums
         run: |
           find htop-staging -type f | xargs sha256sum
