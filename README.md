@@ -13,12 +13,12 @@ via QEMU binfmt emulation, and packages the built binary into RPM and DEB. Targe
 
 ## Branch naming
 
-Push a branch named `loong64-<htop-version>` (e.g. `loong64-3.5.1`) to trigger a build. Append `+<build>`
-(e.g. `loong64-3.5.1+0`) to include build metadata.
+Push a branch named `loong64-<htop-version>` (e.g. `loong64-3.5.2`) to trigger a build. Append `+<build>`
+(e.g. `loong64-3.5.2+0`) to include build metadata.
 
 ## [Release](https://github.com/kubernetes-loong64/htop-loong64/releases)
 
-Push a tag matching `release-loong64-<htop-version>` (e.g. `release-loong64-3.5.1+0`) to publish
+Push a tag matching `release-loong64-<htop-version>` (e.g. `release-loong64-3.5.2+0`) to publish
 a GitHub Release with the built artifacts.
 
 The `+<build>` suffix provides build metadata (e.g. `+0`, `+1-alpha.1`).
